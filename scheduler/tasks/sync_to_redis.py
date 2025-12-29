@@ -29,6 +29,9 @@ class SyncToRedisTask:
             # 同步标签层级树到Redis
             self.sync_label_tree_to_redis()
             
+            # 同步意图句子规则到Redis
+            self.sync_intent_sentences_to_redis()
+            
             logger.info("数据同步任务执行完成")
         except Exception as e:
             logger.error(f"数据同步任务执行失败: {str(e)}", exc_info=True)
@@ -38,6 +41,7 @@ class SyncToRedisTask:
         """
         同步实体信息到Redis
         格式: item_name2label:{system_code} -> Hash {item_name: label_code}
+        只处理 system_type=entity 的标签体系
         """
         logger.info("开始同步实体信息到Redis...")
         
@@ -48,8 +52,14 @@ class SyncToRedisTask:
         for system in tag_systems:
             system_code = system['system_code']
             system_name = system['system_name']
+            system_type = system['system_type']
             
-            logger.info(f"处理标签体系: {system_name} ({system_code})")
+            # 只处理实体类标签体系
+            if system_type != 'entity':
+                logger.debug(f"跳过非实体类标签体系: {system_name} ({system_code}), type={system_type}")
+                continue
+            
+            logger.info(f"处理实体标签体系: {system_name} ({system_code})")
             
             # 2. 获取该体系下的所有实体
             items = self.db.get_items_by_system(system_code)
@@ -98,6 +108,7 @@ class SyncToRedisTask:
         同步标签层级树到Redis
         格式: label_code2label_tree:{system_code} -> Hash {label_code: JSON字符串}
         JSON内容: {"level1": "标签名1", "level2": "标签名2", ...}
+        只处理 system_type=entity 的标签体系
         """
         import json
         
@@ -110,8 +121,14 @@ class SyncToRedisTask:
         for system in tag_systems:
             system_code = system['system_code']
             system_name = system['system_name']
+            system_type = system['system_type']
             
-            logger.info(f"处理标签体系: {system_name} ({system_code})")
+            # 只处理实体类标签体系
+            if system_type != 'entity':
+                logger.debug(f"跳过非实体类标签体系: {system_name} ({system_code}), type={system_type}")
+                continue
+            
+            logger.info(f"处理实体标签体系: {system_name} ({system_code})")
             
             # 2. 获取该体系下的所有标签
             labels = self.db.get_labels_by_system(system_code)
@@ -145,3 +162,59 @@ class SyncToRedisTask:
                 logger.warning(f"  标签体系 {system_code} 下没有标签数据")
         
         logger.info("标签层级树同步完成")
+    
+    def sync_intent_sentences_to_redis(self):
+        """
+        同步意图句子规则到Redis
+        格式: sentence:rule_name2label:{system_code} -> Hash {rule_name: label_code}
+        只处理 system_type=intent 且 rule_type=sentence 的规则
+        """
+        logger.info("开始同步意图句子规则到Redis...")
+        
+        # 1. 获取所有标签体系
+        tag_systems = self.db.get_all_tag_systems()
+        logger.info(f"获取到 {len(tag_systems)} 个标签体系")
+        
+        for system in tag_systems:
+            system_code = system['system_code']
+            system_name = system['system_name']
+            system_type = system['system_type']
+            
+            # 只处理意图类标签体系
+            if system_type != 'intent':
+                logger.debug(f"跳过非意图类标签体系: {system_name} ({system_code}), type={system_type}")
+                continue
+            
+            logger.info(f"处理意图标签体系: {system_name} ({system_code})")
+            
+            # 2. 获取该体系下的所有句子类型规则
+            rules = self.db.get_intent_rules_by_system(system_code, rule_type='sentence')
+            logger.info(f"  获取到 {len(rules)} 个句子规则")
+            
+            # 3. 构建 rule_name -> label_code 映射
+            rule_name_to_label = {}
+            
+            for rule in rules:
+                rule_name = rule['rule_name']
+                label_code = rule['label_code']
+                
+                # 规则名称映射到标签编码（标准化处理）
+                normalized_rule_name = rule_name.lower().strip()
+                rule_name_to_label[normalized_rule_name] = label_code
+            
+            logger.info(f"  构建了 {len(rule_name_to_label)} 个句子规则映射")
+            
+            # 4. 写入Redis
+            redis_key = f"sentence:rule_name2label:{system_code}"
+            
+            if rule_name_to_label:
+                # 先删除旧数据
+                self.redis.delete(redis_key)
+                
+                # 批量写入新数据
+                self.redis.hmset(redis_key, rule_name_to_label)
+                logger.info(f"  已写入Redis: {redis_key}, 共 {len(rule_name_to_label)} 条记录")
+            else:
+                logger.warning(f"  意图体系 {system_code} 下没有句子规则数据")
+        
+        logger.info("意图句子规则同步完成")

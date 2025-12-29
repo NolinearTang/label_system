@@ -156,6 +156,34 @@ class MySQLClient:
         result = self.execute_query(sql, (label_code,))
         return result[0] if result else None
     
+    def get_intent_rules_by_system(self, system_code: str, rule_type: str = None) -> List[Dict[str, Any]]:
+        """
+        根据体系编码获取意图规则（通过关联标签）
+        
+        Args:
+            system_code: 体系编码
+            rule_type: 规则类型（可选，如 'sentence', 'keyword_whitelist' 等）
+            
+        Returns:
+            意图规则列表（包含label_code）
+        """
+        if rule_type:
+            sql = """
+                SELECT ir.*, l.system_code
+                FROM intent_rules ir
+                JOIN labels l ON ir.label_code = l.label_code
+                WHERE l.system_code = %s AND ir.rule_type = %s AND ir.is_active = TRUE
+            """
+            return self.execute_query(sql, (system_code, rule_type))
+        else:
+            sql = """
+                SELECT ir.*, l.system_code
+                FROM intent_rules ir
+                JOIN labels l ON ir.label_code = l.label_code
+                WHERE l.system_code = %s AND ir.is_active = TRUE
+            """
+            return self.execute_query(sql, (system_code,))
+    
     def build_label_tree_path(self, label_code: str) -> Dict[str, str]:
         """
         构建标签的层级树路径
