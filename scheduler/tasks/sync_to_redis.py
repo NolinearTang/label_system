@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Dict, Any, List
 
@@ -31,6 +32,9 @@ class SyncToRedisTask:
             
             # 同步意图句子规则到Redis
             self.sync_intent_sentences_to_redis()
+            
+            # 同步意图标签层级树到Redis
+            self.sync_intent_label_tree_to_redis()
             
             logger.info("数据同步任务执行完成")
         except Exception as e:
@@ -105,14 +109,12 @@ class SyncToRedisTask:
     
     def sync_label_tree_to_redis(self):
         """
-        同步标签层级树到Redis
-        格式: label_code2label_tree:{system_code} -> Hash {label_code: JSON字符串}
+        同步实体标签层级树到Redis
+        格式: entity:label_code2label_tree:{system_code} -> Hash {label_code: JSON字符串}
         JSON内容: {"level1": "标签名1", "level2": "标签名2", ...}
         只处理 system_type=entity 的标签体系
         """
-        import json
-        
-        logger.info("开始同步标签层级树到Redis...")
+        logger.info("开始同步实体标签层级树到Redis...")
         
         # 1. 获取所有标签体系
         tag_systems = self.db.get_all_tag_systems()
@@ -149,7 +151,7 @@ class SyncToRedisTask:
             logger.info(f"  构建了 {len(label_code_to_tree)} 个标签层级树")
             
             # 4. 写入Redis
-            redis_key = f"label_code2label_tree:{system_code}"
+            redis_key = f"entity:label_code2label_tree:{system_code}"
             
             if label_code_to_tree:
                 # 先删除旧数据
@@ -161,7 +163,7 @@ class SyncToRedisTask:
             else:
                 logger.warning(f"  标签体系 {system_code} 下没有标签数据")
         
-        logger.info("标签层级树同步完成")
+        logger.info("实体标签层级树同步完成")
     
     def sync_intent_sentences_to_redis(self):
         """
@@ -218,3 +220,61 @@ class SyncToRedisTask:
                 logger.warning(f"  意图体系 {system_code} 下没有句子规则数据")
         
         logger.info("意图句子规则同步完成")
+    
+    def sync_intent_label_tree_to_redis(self):
+        """
+        同步意图标签层级树到Redis
+        格式: intent:label_code2label_tree:{system_code} -> Hash {label_code: JSON字符串}
+        JSON内容: {"level1": "标签名1", "level2": "标签名2", ...}
+        只处理 system_type=intent 的标签体系
+        """
+        logger.info("开始同步意图标签层级树到Redis...")
+        
+        # 1. 获取所有标签体系
+        tag_systems = self.db.get_all_tag_systems()
+        logger.info(f"获取到 {len(tag_systems)} 个标签体系")
+        
+        for system in tag_systems:
+            system_code = system['system_code']
+            system_name = system['system_name']
+            system_type = system['system_type']
+            
+            # 只处理意图类标签体系
+            if system_type != 'intent':
+                logger.debug(f"跳过非意图类标签体系: {system_name} ({system_code}), type={system_type}")
+                continue
+            
+            logger.info(f"处理意图标签体系: {system_name} ({system_code})")
+            
+            # 2. 获取该体系下的所有标签
+            labels = self.db.get_labels_by_system(system_code)
+            logger.info(f"  获取到 {len(labels)} 个标签")
+            
+            # 3. 构建 label_code -> label_tree 映射
+            label_code_to_tree = {}
+            
+            for label in labels:
+                label_code = label['label_code']
+                
+                # 构建该标签的层级树路径
+                tree_path = self.db.build_label_tree_path(label_code)
+                
+                # 将字典转换为JSON字符串存储
+                label_code_to_tree[label_code] = json.dumps(tree_path, ensure_ascii=False)
+            
+            logger.info(f"  构建了 {len(label_code_to_tree)} 个标签层级树")
+            
+            # 4. 写入Redis
+            redis_key = f"intent:label_code2label_tree:{system_code}"
+            
+            if label_code_to_tree:
+                # 先删除旧数据
+                self.redis.delete(redis_key)
+                
+                # 批量写入新数据
+                self.redis.hmset(redis_key, label_code_to_tree)
+                logger.info(f"  已写入Redis: {redis_key}, 共 {len(label_code_to_tree)} 条记录")
+            else:
+                logger.warning(f"  标签体系 {system_code} 下没有标签数据")
+        
+        logger.info("意图标签层级树同步完成")
