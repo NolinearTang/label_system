@@ -29,7 +29,8 @@ class MySQLClient:
                 password=self.config['password'],
                 database=self.config['database'],
                 charset=self.config['charset'],
-                cursorclass=DictCursor
+                cursorclass=DictCursor,
+                autocommit=True  # 启用自动提交，确保读取最新数据
             )
             logger.info(f"成功连接到MySQL数据库: {self.config['host']}:{self.config['port']}/{self.config['database']}")
         except Exception as e:
