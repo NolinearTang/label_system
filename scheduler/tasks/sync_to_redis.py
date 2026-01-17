@@ -93,7 +93,7 @@ class SyncToRedisTask:
             logger.info(f"  构建了 {len(item_name_to_label)} 个映射（包含同义词）")
             
             # 5. 写入Redis
-            redis_key = f"item_name2label:{system_code}"
+            redis_key = f"kllm:entity:item_name2label:{system_code}"
             
             if item_name_to_label:
                 # 先删除旧数据
@@ -151,7 +151,7 @@ class SyncToRedisTask:
             logger.info(f"  构建了 {len(label_code_to_tree)} 个标签层级树")
             
             # 4. 写入Redis
-            redis_key = f"entity:label_code2label_tree:{system_code}"
+            redis_key = f"kllm:entity:label_code2label_tree:{system_code}"
             
             if label_code_to_tree:
                 # 先删除旧数据
@@ -207,7 +207,7 @@ class SyncToRedisTask:
             logger.info(f"  构建了 {len(rule_name_to_label)} 个句子规则映射")
             
             # 4. 写入Redis
-            redis_key = f"sentence:rule_name2label:{system_code}"
+            redis_key = f"kllm:intent:sentence:rule_name2label:{system_code}"
             
             if rule_name_to_label:
                 # 先删除旧数据
@@ -265,7 +265,7 @@ class SyncToRedisTask:
             logger.info(f"  构建了 {len(label_code_to_tree)} 个标签层级树")
             
             # 4. 写入Redis
-            redis_key = f"intent:label_code2label_tree:{system_code}"
+            redis_key = f"kllm:intent:label_code2label_tree:{system_code}"
             
             if label_code_to_tree:
                 # 先删除旧数据

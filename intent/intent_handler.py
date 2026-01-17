@@ -41,7 +41,7 @@ class IntentHandler:
             new_intent_label_code2label_tree = {}
             
             # 加载句子规则映射: sentence:rule_name2label:{system_code}
-            sentence_key = f"sentence:rule_name2label:{self.intent_system_code}"
+            sentence_key = f"kllm:intent:sentence:rule_name2label:{self.intent_system_code}"
             if self.redis.exists(sentence_key):
                 new_sentence_rule_name2label = self.redis.client.hgetall(sentence_key)
                 logger.info(f"已加载 {len(new_sentence_rule_name2label)} 条句子规则映射")
@@ -49,7 +49,7 @@ class IntentHandler:
                 logger.warning(f"Redis中不存在key: {sentence_key}")
             
             # 加载意图标签层级树: intent:label_code2label_tree:{system_code}
-            tree_key = f"intent:label_code2label_tree:{self.intent_system_code}"
+            tree_key = f"kllm:intent:label_code2label_tree:{self.intent_system_code}"
             if self.redis.exists(tree_key):
                 raw_tree_data = self.redis.client.hgetall(tree_key)
                 # 将JSON字符串解析为字典
@@ -81,7 +81,7 @@ class IntentHandler:
             如果匹配到意图，返回意图的label_tree字典，否则返回None
             label_tree格式: {"level1": "标签名1", "level2": "标签名2", ...}
         """
-        if not sentence:
+        if not sentence or not self.sententce_rule_name2label:
             return None
         
         # 标准化输入句子

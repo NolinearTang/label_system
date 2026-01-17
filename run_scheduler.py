@@ -1,4 +1,5 @@
 import logging
+import os.path
 import time
 import signal
 import sys
@@ -11,6 +12,10 @@ from scheduler.tasks import SyncToRedisTask
 
 def setup_logging():
     """配置日志"""
+
+if not os.path.exists('logs'):
+    os.mkdir('logs')
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
@@ -29,7 +34,7 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-def main():
+def main(env):
     """主函数"""
     # 设置日志
     setup_logging()
@@ -45,7 +50,7 @@ def main():
     
     try:
         # 加载配置
-        config = get_config()
+        config = get_config(env)
         logger.info(f"当前环境: {config.env}")
         logger.info(f"同步间隔: {config.SYNC_INTERVAL_SECONDS} 秒")
         
@@ -104,4 +109,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main("production")
