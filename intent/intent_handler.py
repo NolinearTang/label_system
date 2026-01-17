@@ -81,7 +81,7 @@ class IntentHandler:
             如果匹配到意图，返回意图的label_tree字典，否则返回None
             label_tree格式: {"level1": "标签名1", "level2": "标签名2", ...}
         """
-        if not sentence or not self.sententce_rule_name2label:
+        if not sentence or not self.sentence_rule_name2label:
             return None
         
         # 标准化输入句子
