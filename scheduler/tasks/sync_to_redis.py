@@ -36,6 +36,9 @@ class SyncToRedisTask:
             # 同步意图标签层级树到Redis
             self.sync_intent_label_tree_to_redis()
             
+            # 同步实体层级树到Redis
+            self.sync_item_tree_to_redis()
+            
             logger.info("数据同步任务执行完成")
         except Exception as e:
             logger.error(f"数据同步任务执行失败: {str(e)}", exc_info=True)
@@ -164,6 +167,78 @@ class SyncToRedisTask:
                 logger.warning(f"  标签体系 {system_code} 下没有标签数据")
         
         logger.info("实体标签层级树同步完成")
+    
+    def sync_item_tree_to_redis(self):
+        """
+        同步实体层级树到Redis
+        格式: kllm:entity:item_name2tree:{system_code} -> Hash {item_name: JSON字符串}
+        JSON内容: {"level1": "实体名1", "level2": "实体名2", ...}
+        只处理 system_type=entity 的标签体系
+        注意：同义词的层级树最后一层是标准词（item_name），而不是同义词本身
+        """
+        logger.info("开始同步实体层级树到Redis...")
+        
+        # 1. 获取所有标签体系
+        tag_systems = self.db.get_all_tag_systems()
+        logger.info(f"获取到 {len(tag_systems)} 个标签体系")
+        
+        for system in tag_systems:
+            system_code = system['system_code']
+            system_name = system['system_name']
+            system_type = system['system_type']
+            
+            # 只处理实体类标签体系
+            if system_type != 'entity':
+                logger.debug(f"跳过非实体类标签体系: {system_name} ({system_code}), type={system_type}")
+                continue
+            
+            logger.info(f"处理实体标签体系: {system_name} ({system_code})")
+            
+            # 2. 获取该体系下的所有实体
+            items = self.db.get_items_by_system(system_code)
+            logger.info(f"  获取到 {len(items)} 个实体")
+            
+            # 3. 构建 item_name -> item_tree 映射
+            item_name_to_tree = {}
+            
+            for item in items:
+                item_name = item['item_name']
+                item_code = item['item_code']
+                
+                # 构建该实体的层级树路径
+                tree_path = self.db.build_item_tree_path(item_code)
+                
+                # 实体名称（标准词）映射到层级树（标准化处理）
+                normalized_item_name = item_name.lower().strip()
+                tree_json = json.dumps(tree_path, ensure_ascii=False)
+                item_name_to_tree[normalized_item_name] = tree_json
+                
+                # 4. 获取该实体的所有同义词
+                synonyms = self.db.get_synonyms_by_item(item_code)
+                
+                # 同义词也映射到相同的层级树（最后一层是标准词，不是同义词本身）
+                for synonym in synonyms:
+                    synonym_name = synonym['synonym']
+                    normalized_synonym = synonym_name.lower().strip()
+                    # 同义词使用相同的层级树（层级树最后一层是标准词item_name）
+                    item_name_to_tree[normalized_synonym] = tree_json
+            
+            logger.info(f"  构建了 {len(item_name_to_tree)} 个实体层级树（包含同义词）")
+            
+            # 5. 写入Redis
+            redis_key = f"kllm:entity:item_name2tree:{system_code}"
+            
+            if item_name_to_tree:
+                # 先删除旧数据
+                self.redis.delete(redis_key)
+                
+                # 批量写入新数据
+                self.redis.hmset(redis_key, item_name_to_tree)
+                logger.info(f"  已写入Redis: {redis_key}, 共 {len(item_name_to_tree)} 条记录")
+            else:
+                logger.warning(f"  标签体系 {system_code} 下没有实体数据")
+        
+        logger.info("实体层级树同步完成")
     
     def sync_intent_sentences_to_redis(self):
         """

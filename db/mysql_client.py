@@ -185,6 +185,20 @@ class MySQLClient:
             """
             return self.execute_query(sql, (system_code,))
     
+    def get_item_by_code(self, item_code: str) -> Optional[Dict[str, Any]]:
+        """
+        根据实体编码获取实体信息
+        
+        Args:
+            item_code: 实体编码
+            
+        Returns:
+            实体信息，如果不存在返回None
+        """
+        sql = "SELECT * FROM items WHERE item_code = %s"
+        result = self.execute_query(sql, (item_code,))
+        return result[0] if result else None
+    
     def build_label_tree_path(self, label_code: str) -> Dict[str, str]:
         """
         构建标签的层级树路径
@@ -223,6 +237,50 @@ class MySQLClient:
         for item in path_list:
             level_key = f"level{item['level']}"
             tree_path[level_key] = item['label_name'].lower().strip()
+        
+        return tree_path
+    
+    def build_item_tree_path(self, item_code: str) -> Dict[str, str]:
+        """
+        构建实体的层级树路径
+        
+        Args:
+            item_code: 实体编码
+            
+        Returns:
+            层级树字典 {"level1": "实体名1", "level2": "实体名2", ...}
+            最小层级对应自己，上一级对应parent_item_code
+        """
+        tree_path = {}
+        current_item = self.get_item_by_code(item_code)
+        
+        if not current_item:
+            return tree_path
+        
+        # 从当前实体向上追溯到根节点
+        path_list = []
+        level = 1
+        while current_item:
+            path_list.append({
+                'level': level,
+                'item_name': current_item['item_name']
+            })
+            level += 1
+            
+            # 获取父实体
+            parent_code = current_item.get('parent_item_code')
+            if parent_code:
+                current_item = self.get_item_by_code(parent_code)
+            else:
+                current_item = None
+        
+        # 反转列表，从根节点到当前节点
+        path_list.reverse()
+        
+        # 构建层级字典（标准化处理）
+        for item in path_list:
+            level_key = f"level{item['level']}"
+            tree_path[level_key] = item['item_name'].lower().strip()
         
         return tree_path
     
