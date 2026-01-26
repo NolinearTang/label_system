@@ -22,16 +22,24 @@ class IntentHandler:
         
         # 从配置中获取意图体系的system_code
         self.intent_system_code = config.get("user_id", {}).get("intent_system_code")
+        # 从配置中获取实体体系的system_code
+        self.entity_system_code = config.get("user_id", {}).get("entity_system_code")
         
         # 线程锁，保证读写安全
         self._lock = threading.RLock()
         
-        # 初始化时加载Redis数据
+        # 初始化意图相关数据
         self.sentence_rule_name2label = {}
         self.intent_label_code2label_tree = {}
         
+        # 初始化实体相关数据
+        self.entity_list = []  # 实体列表
+        self.item_name2label = {}  # 实体名称到标签编码的映射
+        self.item_name2tree = {}  # 实体名称到层级树的映射
+        
         # 首次加载数据
         self._load_data_from_redis()
+        self._load_entity_from_redis()
     
     def _load_data_from_redis(self):
         """从Redis加载意图相关数据（线程安全）"""
@@ -68,6 +76,47 @@ class IntentHandler:
                 
         except Exception as e:
             logger.error(f"从Redis加载意图数据失败: {str(e)}", exc_info=True)
+            raise
+    
+    def _load_entity_from_redis(self):
+        """从Redis加载实体相关数据（线程安全）"""
+        try:
+            # 临时存储新数据
+            new_item_name2label = {}
+            new_item_name2tree = {}
+            
+            # 加载实体名称到标签编码的映射: kllm:entity:item_name2label:{system_code}
+            item_label_key = f"kllm:entity:item_name2label:{self.entity_system_code}"
+            if self.redis.exists(item_label_key):
+                new_item_name2label = self.redis.client.hgetall(item_label_key)
+                logger.info(f"已加载 {len(new_item_name2label)} 条实体名称到标签映射")
+            else:
+                logger.warning(f"Redis中不存在key: {item_label_key}")
+            
+            # 加载实体名称到层级树的映射: kllm:entity:item_name2tree:{system_code}
+            item_tree_key = f"kllm:entity:item_name2tree:{self.entity_system_code}"
+            if self.redis.exists(item_tree_key):
+                raw_tree_data = self.redis.client.hgetall(item_tree_key)
+                # 将JSON字符串解析为字典
+                new_item_name2tree = {
+                    item_name: json.loads(tree_json)
+                    for item_name, tree_json in raw_tree_data.items()
+                }
+                logger.info(f"已加载 {len(new_item_name2tree)} 条实体层级树")
+            else:
+                logger.warning(f"Redis中不存在key: {item_tree_key}")
+            
+            # 构建实体列表（所有实体名称，包括标准词和同义词）
+            new_entity_list = list(new_item_name2label.keys())
+            
+            # 使用锁更新数据，保证原子性
+            with self._lock:
+                self.item_name2label = new_item_name2label
+                self.item_name2tree = new_item_name2tree
+                self.entity_list = new_entity_list
+                
+        except Exception as e:
+            logger.error(f"从Redis加载实体数据失败: {str(e)}", exc_info=True)
             raise
     
     def intent_by_sentence(self, sentence: str) -> Optional[Dict[str, str]]:
@@ -108,5 +157,6 @@ class IntentHandler:
     
     def reload_data(self):
         """重新加载Redis数据（由外部调度器调用）"""
-        logger.info("重新加载意图数据...")
+        logger.info("重新加载意图和实体数据...")
         self._load_data_from_redis()
+        self._load_entity_from_redis()
