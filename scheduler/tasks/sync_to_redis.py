@@ -8,16 +8,18 @@ logger = logging.getLogger(__name__)
 class SyncToRedisTask:
     """数据库到Redis同步任务"""
     
-    def __init__(self, db_client, redis_client):
+    def __init__(self, db_client, redis_client, embedding_handler=None):
         """
         初始化同步任务
         
         Args:
             db_client: 数据库客户端
             redis_client: Redis客户端
+            embedding_handler: Embedding处理器（可选，用于intent faiss同步）
         """
         self.db = db_client
         self.redis = redis_client
+        self.embedding_handler = embedding_handler
     
     def execute(self):
         """执行同步任务"""
@@ -38,6 +40,12 @@ class SyncToRedisTask:
             
             # 同步实体层级树到Redis
             self.sync_item_tree_to_redis()
+            
+            # 同步意图 faiss embedding 到Redis
+            if self.embedding_handler:
+                self.sync_intent_faiss_to_redis()
+            else:
+                logger.warning("未配置embedding_handler，跳过意图faiss同步")
             
             logger.info("数据同步任务执行完成")
         except Exception as e:
@@ -353,3 +361,94 @@ class SyncToRedisTask:
                 logger.warning(f"  标签体系 {system_code} 下没有标签数据")
         
         logger.info("意图标签层级树同步完成")
+    
+    def sync_intent_faiss_to_redis(self):
+        """
+        同步意图 faiss embedding 到Redis
+        格式: kllm:intent:faiss:{system_code} -> Hash {label_code: JSON字符串}
+        JSON内容: [{"text": "句子1", "embedding": [...]}, {"text": "句子2", "embedding": [...]}]
+        只处理 system_type=intent 且 rule_type=sentence 的规则
+        """
+        logger.info("开始同步意图faiss embedding到Redis...")
+        
+        if not self.embedding_handler:
+            logger.warning("embedding_handler未配置，无法同步意图faiss")
+            return
+        
+        # 1. 获取所有标签体系
+        tag_systems = self.db.get_all_tag_systems()
+        logger.info(f"获取到 {len(tag_systems)} 个标签体系")
+        
+        for system in tag_systems:
+            system_code = system['system_code']
+            system_name = system['system_name']
+            system_type = system['system_type']
+            
+            # 只处理意图类标签体系
+            if system_type != 'intent':
+                logger.debug(f"跳过非意图类标签体系: {system_name} ({system_code}), type={system_type}")
+                continue
+            
+            logger.info(f"处理意图标签体系: {system_name} ({system_code})")
+            
+            # 2. 获取该体系下的所有句子类型规则
+            rules = self.db.get_intent_rules_by_system(system_code, rule_type='sentence')
+            logger.info(f"  获取到 {len(rules)} 个句子规则")
+            
+            if not rules:
+                logger.warning(f"  意图体系 {system_code} 下没有句子规则数据")
+                continue
+            
+            # 3. 按 label_code 分组规则
+            label_code_to_sentences = {}
+            for rule in rules:
+                rule_name = rule['rule_name']  # 句子内容
+                label_code = rule['label_code']
+                
+                if label_code not in label_code_to_sentences:
+                    label_code_to_sentences[label_code] = []
+                
+                label_code_to_sentences[label_code].append(rule_name)
+            
+            logger.info(f"  共 {len(label_code_to_sentences)} 个label_code")
+            
+            # 4. 对每个 label_code 的句子进行 embedding
+            label_code_to_embeddings = {}
+            
+            for label_code, sentences in label_code_to_sentences.items():
+                logger.info(f"  处理 label_code: {label_code}, 句子数: {len(sentences)}")
+                
+                try:
+                    # 批量获取 embedding
+                    embeddings = self.embedding_handler.get_embedding(sentences)
+                    
+                    # 构建数据列表
+                    embedding_data = []
+                    for text, embedding in zip(sentences, embeddings):
+                        embedding_data.append({
+                            "text": text,
+                            "embedding": embedding
+                        })
+                    
+                    # 转换为JSON字符串
+                    label_code_to_embeddings[label_code] = json.dumps(embedding_data, ensure_ascii=False)
+                    logger.info(f"  label_code {label_code} 的 {len(sentences)} 个句子已完成embedding")
+                    
+                except Exception as e:
+                    logger.error(f"  处理 label_code {label_code} 的embedding失败: {str(e)}", exc_info=True)
+                    continue
+            
+            # 5. 写入Redis
+            redis_key = f"kllm:intent:faiss:{system_code}"
+            
+            if label_code_to_embeddings:
+                # 先删除旧数据
+                self.redis.delete(redis_key)
+                
+                # 批量写入新数据
+                self.redis.hmset(redis_key, label_code_to_embeddings)
+                logger.info(f"  已写入Redis: {redis_key}, 共 {len(label_code_to_embeddings)} 个label_code")
+            else:
+                logger.warning(f"  意图体系 {system_code} 下没有embedding数据")
+        
+        logger.info("意图faiss embedding同步完成")

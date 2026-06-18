@@ -8,6 +8,7 @@ from db import MySQLClient
 from cache import RedisClient
 from scheduler import LabelSystemScheduler
 from scheduler.tasks import SyncToRedisTask
+from embedding_rerank_handler import EmbeddingRerankHandler
 
 
 def setup_logging():
@@ -66,8 +67,20 @@ def main(env):
         redis_client.connect()
         logger.info("Redis客户端初始化完成")
         
+        # 初始化Embedding处理器
+        embedding_config = config.get_embedding_config()
+        embedding_handler = None
+        if embedding_config.get('embedding_url'):
+            embedding_handler = EmbeddingRerankHandler(
+                embedding_url=embedding_config['embedding_url'],
+                rerank_url=embedding_config.get('rerank_url')
+            )
+            logger.info("Embedding处理器初始化完成")
+        else:
+            logger.warning("未配置EMBEDDING_URL，将跳过意图faiss同步")
+        
         # 创建同步任务
-        sync_task = SyncToRedisTask(db_client, redis_client)
+        sync_task = SyncToRedisTask(db_client, redis_client, embedding_handler)
         
         # 创建调度器
         scheduler = LabelSystemScheduler()

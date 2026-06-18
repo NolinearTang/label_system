@@ -43,6 +43,10 @@ class Config:
         
         # 定时任务配置
         self.SYNC_INTERVAL_SECONDS = int(os.getenv('SYNC_INTERVAL_SECONDS', '300'))
+        
+        # Embedding服务配置
+        self.EMBEDDING_URL = os.getenv('EMBEDDING_URL', None)
+        self.RERANK_URL = os.getenv('RERANK_URL', None)
     
     def get_mysql_config(self) -> Dict[str, Any]:
         """获取MySQL配置"""
@@ -66,6 +70,13 @@ class Config:
         if self.REDIS_PASSWORD:
             config['password'] = self.REDIS_PASSWORD
         return config
+    
+    def get_embedding_config(self) -> Dict[str, Any]:
+        """获取Embedding服务配置"""
+        return {
+            'embedding_url': self.EMBEDDING_URL,
+            'rerank_url': self.RERANK_URL,
+        }
 
 
 def get_config(env: str = None) -> Config:
