@@ -54,31 +54,42 @@ class IntentHandler:
     
     def _load_data_from_redis(self):
         """从Redis加载意图相关数据（线程安全）"""
+        if not self.intent_system_code:
+            logger.warning("intent_system_code未配置，跳过意图数据加载")
+            return
+        
         try:
-            # 临时存储新数据
+            # 临时存储新数据 - 使用二级字典结构按 intent_name 隔离
             new_sentence_rule_name2label = {}
             new_intent_label_code2label_tree = {}
             
-            # 加载句子规则映射: sentence:rule_name2label:{system_code}
-            sentence_key = f"kllm:intent:sentence:rule_name2label:{self.intent_system_code}"
-            if self.redis.exists(sentence_key):
-                new_sentence_rule_name2label = self.redis.client.hgetall(sentence_key)
-                logger.info(f"已加载 {len(new_sentence_rule_name2label)} 条句子规则映射")
-            else:
-                logger.warning(f"Redis中不存在key: {sentence_key}")
-            
-            # 加载意图标签层级树: intent:label_code2label_tree:{system_code}
-            tree_key = f"kllm:intent:label_code2label_tree:{self.intent_system_code}"
-            if self.redis.exists(tree_key):
-                raw_tree_data = self.redis.client.hgetall(tree_key)
-                # 将JSON字符串解析为字典
-                new_intent_label_code2label_tree = {
-                    label_code: json.loads(tree_json)
-                    for label_code, tree_json in raw_tree_data.items()
-                }
-                logger.info(f"已加载 {len(new_intent_label_code2label_tree)} 条意图标签层级树")
-            else:
-                logger.warning(f"Redis中不存在key: {tree_key}")
+            # 遍历所有意图体系配置
+            for intent_name, system_code in self.intent_system_code.items():
+                logger.info(f"加载意图 {intent_name} (system_code: {system_code}) 的数据")
+                
+                # 初始化该 intent_name 的数据
+                new_sentence_rule_name2label[intent_name] = {}
+                new_intent_label_code2label_tree[intent_name] = {}
+                
+                # 加载句子规则映射: sentence:rule_name2label:{system_code}
+                sentence_key = f"kllm:intent:sentence:rule_name2label:{system_code}"
+                if self.redis.exists(sentence_key):
+                    sentence_data = self.redis.client.hgetall(sentence_key)
+                    new_sentence_rule_name2label[intent_name] = sentence_data
+                    logger.info(f"  已加载 {len(sentence_data)} 条句子规则映射")
+                else:
+                    logger.warning(f"  Redis中不存在key: {sentence_key}")
+                
+                # 加载意图标签层级树: intent:label_code2label_tree:{system_code}
+                tree_key = f"kllm:intent:label_code2label_tree:{system_code}"
+                if self.redis.exists(tree_key):
+                    raw_tree_data = self.redis.client.hgetall(tree_key)
+                    # 将JSON字符串解析为字典
+                    for label_code, tree_json in raw_tree_data.items():
+                        new_intent_label_code2label_tree[intent_name][label_code] = json.loads(tree_json)
+                    logger.info(f"  已加载 {len(raw_tree_data)} 条意图标签层级树")
+                else:
+                    logger.warning(f"  Redis中不存在key: {tree_key}")
             
             # 使用锁更新数据，保证原子性
             with self._lock:
@@ -130,12 +141,13 @@ class IntentHandler:
             logger.error(f"从Redis加载实体数据失败: {str(e)}", exc_info=True)
             raise
     
-    def intent_by_sentence(self, sentence: str) -> Optional[Dict[str, str]]:
+    def intent_by_sentence(self, sentence: str, intent_name: str) -> Optional[Dict[str, str]]:
         """
         根据句子判断意图标签（线程安全）
         
         Args:
             sentence: 输入的句子
+            intent_name: 意图名称
             
         Returns:
             如果匹配到意图，返回意图的label_tree字典，否则返回None
@@ -149,22 +161,25 @@ class IntentHandler:
         
         # 使用锁保护读取操作
         with self._lock:
-            # 在句子规则映射中查找
-            label_code = self.sentence_rule_name2label.get(normalized_sentence)
+            if intent_name not in self.sentence_rule_name2label:
+                logger.warning(f"意图 {intent_name} 不存在")
+                return None
+            
+            label_code = self.sentence_rule_name2label[intent_name].get(normalized_sentence)
             
             if not label_code:
-                logger.debug(f"未找到句子 '{sentence}' 对应的意图标签")
+                logger.debug(f"在意图 {intent_name} 中未找到句子 '{sentence}'")
                 return None
             
             # 根据label_code获取层级树
-            label_tree = self.intent_label_code2label_tree.get(label_code)
-        
-        if label_tree:
-            logger.info(f"句子 '{sentence}' 匹配到意图标签: {label_code}, 层级树: {label_tree}")
-            return label_tree
-        else:
-            logger.warning(f"找到label_code '{label_code}' 但未找到对应的层级树")
-            return None
+            label_tree = self.intent_label_code2label_tree[intent_name].get(label_code)
+            
+            if label_tree:
+                logger.info(f"句子 '{sentence}' 在意图 {intent_name} 中匹配到标签: {label_code}, 层级树: {label_tree}")
+                return label_tree
+            else:
+                logger.warning(f"找到label_code '{label_code}' 但未找到对应的层级树")
+                return None
     
     def reload_data(self):
         """重新加载Redis数据（由外部调度器调用）"""
@@ -191,13 +206,7 @@ class IntentHandler:
             new_faiss_label_mapping = {}
             
             # 遍历所有意图体系配置
-            if isinstance(self.intent_system_code, dict):
-                intent_configs = self.intent_system_code
-            else:
-                # 如果是单个字符串，转换为字典格式
-                intent_configs = {"default": self.intent_system_code}
-            
-            for intent_name, system_code in intent_configs.items():
+            for intent_name, system_code in self.intent_system_code.items():
                 logger.info(f"加载意图 {intent_name} (system_code: {system_code}) 的faiss数据")
                 
                 # 从Redis加载faiss数据
@@ -322,8 +331,8 @@ class IntentHandler:
                     # 使用负指数函数将距离转换为0-1之间的相似度
                     similarity = 1.0 / (1.0 + distance)
                     
-                    # 获取label_tree
-                    label_tree = self.intent_label_code2label_tree.get(label_code, {})
+                    # 获取label_tree（从对应的 intent_name 中获取）
+                    label_tree = self.intent_label_code2label_tree.get(intent_name, {}).get(label_code, {})
                     
                     results.append((label_code, float(similarity), label_tree))
                     
