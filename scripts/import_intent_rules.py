@@ -109,8 +109,8 @@ class IntentRuleImporter:
                 # 插入规则
                 insert_sql = """
                     INSERT INTO intent_rules 
-                    (rule_code, rule_type, rule_name, label_code, is_active)
-                    VALUES (%s, %s, %s, %s, %s)
+                    (rule_code, rule_type, rule_name, label_code, is_active, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
                 """
                 self.db.execute_query(
                     insert_sql, 
@@ -177,8 +177,8 @@ class IntentRuleImporter:
                 # 插入规则
                 insert_sql = """
                     INSERT INTO intent_rules 
-                    (rule_code, rule_type, rule_name, label_code, is_active)
-                    VALUES (%s, %s, %s, %s, %s)
+                    (rule_code, rule_type, rule_name, label_code, is_active, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
                 """
                 self.db.execute_query(
                     insert_sql,
