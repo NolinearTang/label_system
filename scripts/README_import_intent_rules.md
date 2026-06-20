@@ -153,13 +153,22 @@ print(f"已删除 {deleted_count} 条规则")
 
 自动生成的规则编码格式：
 ```
-RULE_{label_code}_{rule_type}_{timestamp}_{序号}
+rule_code_xxxxxxxx
 ```
+
+其中 `xxxxxxxx` 是8位数字，前面以0填充，自动递增。
+
+生成逻辑：
+1. 查询数据库中最大的 rule_code
+2. 提取数字部分并递增
+3. 生成新的 rule_code
 
 示例：
 ```
-RULE_INTENT_PRODUCT_001_SENTENCE_20260620175030_0001
-RULE_INTENT_PRODUCT_001_KEYWORD_WHITELIST_20260620175030_0002
+rule_code_00000001
+rule_code_00000002
+rule_code_00000123
+rule_code_99999999
 ```
 
 ## 注意事项
