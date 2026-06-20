@@ -38,37 +38,34 @@ class IntentRuleImporter:
         Returns:
             规则编码，格式: rule_code_xxxxxxxx (8位数字，前面补0)
             例如: rule_code_00000001, rule_code_00000002
+        
+        Raises:
+            Exception: 如果查询数据库失败
         """
-        try:
-            # 查询当前最大的 rule_code
-            query_sql = """
-                SELECT rule_code 
-                FROM intent_rules 
-                WHERE rule_code LIKE 'rule_code_%'
-                ORDER BY rule_code DESC 
-                LIMIT 1
-            """
-            result = self.db.execute_query(query_sql)
-            
-            if result and len(result) > 0:
-                max_rule_code = result[0]['rule_code']
-                # 提取数字部分
-                # rule_code_00000123 -> 00000123 -> 123
-                number_part = max_rule_code.split('_')[-1]
-                next_number = int(number_part) + 1
-            else:
-                # 如果没有记录，从1开始
-                next_number = 1
-            
-            # 生成新的 rule_code，8位数字，前面补0
-            new_rule_code = f"rule_code_{next_number:08d}"
-            return new_rule_code
-            
-        except Exception as e:
-            logger.error(f"生成 rule_code 失败: {str(e)}")
-            # 如果查询失败，使用时间戳作为备用方案
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-            return f"rule_code_{int(timestamp[-8:]):08d}"
+        # 查询当前最大的 rule_code
+        query_sql = """
+            SELECT rule_code 
+            FROM intent_rules 
+            WHERE rule_code LIKE 'rule_code_%'
+            ORDER BY rule_code DESC 
+            LIMIT 1
+        """
+        result = self.db.execute_query(query_sql)
+        
+        if result and len(result) > 0:
+            max_rule_code = result[0]['rule_code']
+            # 提取数字部分
+            # rule_code_00000123 -> 00000123 -> 123
+            number_part = max_rule_code.split('_')[-1]
+            next_number = int(number_part) + 1
+        else:
+            # 如果没有记录，从1开始
+            next_number = 1
+        
+        # 生成新的 rule_code，8位数字，前面补0
+        new_rule_code = f"rule_code_{next_number:08d}"
+        logger.debug(f"生成新的 rule_code: {new_rule_code}")
+        return new_rule_code
     
     def import_sentences(
         self, 
