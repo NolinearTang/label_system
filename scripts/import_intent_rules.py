@@ -29,20 +29,46 @@ class IntentRuleImporter:
     def __init__(self, db_client: MySQLClient):
         self.db = db_client
     
-    def generate_rule_code(self, label_code: str, rule_type: str, index: int) -> str:
+    def generate_rule_code(self) -> str:
         """
         生成规则编码
         
-        Args:
-            label_code: 标签编码
-            rule_type: 规则类型
-            index: 序号
-            
+        从数据库中查询最大的 rule_code，然后递增生成新的编码
+        
         Returns:
-            规则编码，格式: RULE_{label_code}_{rule_type}_{index}
+            规则编码，格式: rule_code_xxxxxxxx (8位数字，前面补0)
+            例如: rule_code_00000001, rule_code_00000002
         """
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        return f"RULE_{label_code}_{rule_type.upper()}_{timestamp}_{index:04d}"
+        try:
+            # 查询当前最大的 rule_code
+            query_sql = """
+                SELECT rule_code 
+                FROM intent_rules 
+                WHERE rule_code LIKE 'rule_code_%'
+                ORDER BY rule_code DESC 
+                LIMIT 1
+            """
+            result = self.db.execute_query(query_sql)
+            
+            if result and len(result) > 0:
+                max_rule_code = result[0]['rule_code']
+                # 提取数字部分
+                # rule_code_00000123 -> 00000123 -> 123
+                number_part = max_rule_code.split('_')[-1]
+                next_number = int(number_part) + 1
+            else:
+                # 如果没有记录，从1开始
+                next_number = 1
+            
+            # 生成新的 rule_code，8位数字，前面补0
+            new_rule_code = f"rule_code_{next_number:08d}"
+            return new_rule_code
+            
+        except Exception as e:
+            logger.error(f"生成 rule_code 失败: {str(e)}")
+            # 如果查询失败，使用时间戳作为备用方案
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+            return f"rule_code_{int(timestamp[-8:]):08d}"
     
     def import_sentences(
         self, 
@@ -80,7 +106,7 @@ class IntentRuleImporter:
                 continue
             
             sentence = sentence.strip()
-            rule_code = self.generate_rule_code(label_code, 'sentence', i)
+            rule_code = self.generate_rule_code()
             
             try:
                 # 插入规则
@@ -148,7 +174,7 @@ class IntentRuleImporter:
                 continue
             
             keyword = keyword.strip()
-            rule_code = self.generate_rule_code(label_code, rule_type, i)
+            rule_code = self.generate_rule_code()
             
             try:
                 # 插入规则
