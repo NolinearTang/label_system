@@ -274,37 +274,27 @@ class IntentHandler:
     def search_intent_by_faiss(
         self, 
         query: str, 
-        intent_name: str = None,
-        top_k: int = 5
-    ) -> List[Tuple[str, float, Dict[str, str]]]:
+        intent_name: str
+    ) -> Dict[str, str]:
         """
         使用faiss检索意图
         
         Args:
             query: 查询文本
-            intent_name: 意图名称（intent_system_code的key），如果为None则使用第一个可用的意图
-            top_k: 返回前k个结果
+            intent_name: 意图名称（intent_system_code的key）
             
         Returns:
-            结果列表，每个元素为 (label_code, similarity_score, label_tree)
-            similarity_score: 相似度分数（距离的倒数，越大越相似）
+            如果最相似的结果相似度 >= 0.95，返回对应的label_tree字典，否则返回空字典
+            label_tree格式: {"level1": "标签名1", "level2": "标签名2", ...}
         """
         if not self.embedding_handler:
             logger.warning("embedding_handler未配置，无法进行faiss检索")
-            return []
-        
-        # 确定使用哪个意图索引
-        if intent_name is None:
-            if not self.faiss_dic:
-                logger.warning("没有可用的faiss索引")
-                return []
-            intent_name = list(self.faiss_dic.keys())[0]
-            logger.info(f"未指定intent_name，使用默认意图: {intent_name}")
+            return {}
         
         # 检查意图是否存在
         if intent_name not in self.faiss_dic:
             logger.warning(f"意图 {intent_name} 的faiss索引不存在")
-            return []
+            return {}
         
         try:
             # 获取查询文本的embedding
@@ -316,34 +306,39 @@ class IntentHandler:
                 index = self.faiss_dic[intent_name]
                 label_mapping = self.faiss_label_mapping[intent_name]
                 
-                # 进行检索
-                distances, indices = index.search(query_vector, top_k)
+                # 只检索最相似的1个结果
+                distances, indices = index.search(query_vector, 1)
                 
-                # 构建结果
-                results = []
-                for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
-                    if idx == -1:  # faiss返回-1表示无效结果
-                        continue
-                    
-                    label_code = label_mapping[idx]
-                    
-                    # 将L2距离转换为相似度分数（距离越小，相似度越高）
-                    # 使用负指数函数将距离转换为0-1之间的相似度
-                    similarity = 1.0 / (1.0 + distance)
-                    
+                # 获取第一个结果
+                distance = distances[0][0]
+                idx = indices[0][0]
+                
+                # 检查是否有效
+                if idx == -1:
+                    logger.debug(f"faiss检索未找到有效结果，查询: '{query}'")
+                    return {}
+                
+                label_code = label_mapping[idx]
+                
+                # 将L2距离转换为相似度分数（距离越小，相似度越高）
+                # 使用负指数函数将距离转换为0-1之间的相似度
+                similarity = 1.0 / (1.0 + distance)
+                
+                logger.info(
+                    f"faiss检索结果: label_code={label_code}, "
+                    f"similarity={similarity:.4f}, distance={distance:.4f}, 查询: '{query}'"
+                )
+                
+                # 判断相似度是否 >= 0.95
+                if similarity >= 0.95:
                     # 获取label_tree（从对应的 intent_name 中获取）
                     label_tree = self.intent_label_code2label_tree.get(intent_name, {}).get(label_code, {})
-                    
-                    results.append((label_code, float(similarity), label_tree))
-                    
-                    logger.debug(
-                        f"  结果 {i+1}: label_code={label_code}, "
-                        f"similarity={similarity:.4f}, distance={distance:.4f}"
-                    )
-            
-            logger.info(f"faiss检索完成，查询: '{query}'，返回 {len(results)} 个结果")
-            return results
+                    logger.info(f"相似度满足阈值(>= 0.95)，返回标签树: {label_tree}")
+                    return label_tree
+                else:
+                    logger.info(f"相似度 {similarity:.4f} 低于阈值 0.95，返回空字典")
+                    return {}
             
         except Exception as e:
             logger.error(f"faiss检索失败: {str(e)}", exc_info=True)
-            return []
+            return {}
